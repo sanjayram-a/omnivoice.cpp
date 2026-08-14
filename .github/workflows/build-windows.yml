@@ -20,23 +20,27 @@ jobs:
         with:
           cuda: '12.2.0'
           method: 'network'
-          use-cache: 'false'
+          use-github-cache: 'false'
 
-      - name: Setup MSVC & Developer Command Prompt
+      - name: Setup MSVC (x64)
         uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
       - name: Configure CMake
         run: |
-          cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release
+          cmake -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DCMAKE_CUDA_COMPILER="$env:CUDA_PATH/bin/nvcc.exe"
 
       - name: Build Executables
         run: |
-          cmake --build build --config Release -j 4
+          cmake --build build --config Release
 
       - name: Upload Windows Binaries
         uses: actions/upload-artifact@v4
         with:
           name: omnivoice-windows-cuda-x64
           path: |
-            build/bin/Release/*.exe
-            build/bin/Release/*.dll
+            build/bin/*.exe
+            build/bin/*.dll
+            build/*.exe
+            build/*.dll
