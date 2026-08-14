@@ -8,6 +8,7 @@ on:
 jobs:
   build-windows:
     runs-on: windows-2022
+    timeout-minutes: 90
 
     steps:
       - name: Checkout repository
@@ -16,31 +17,61 @@ jobs:
           submodules: recursive
 
       - name: Install CUDA Toolkit
-        uses: Jimver/cuda-toolkit@v0.2.19
+        uses: Jimver/cuda-toolkit@v0.2.24
         with:
-          cuda: '12.2.0'
+          cuda: '12.4.0'
           method: 'network'
-          use-github-cache: 'false'
+          use-github-cache: 'true'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
 
       - name: Setup MSVC (x64)
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      - name: Configure CMake
+      - name: Apply OmniVoice CUDA patch to vendor/ggml
+        shell: bash
         run: |
-          cmake -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DCMAKE_CUDA_COMPILER="$env:CUDA_PATH/bin/nvcc.exe"
+          set -euo pipefail
+          patch_file="$PWD/patches/ggml-v0.9.11-omnivoice-cuda-fixes.patch"
+          if [ ! -f "$patch_file" ]; then
+            echo "::error::Patch file not found at $patch_file"
+            exit 1
+          fi
+          if git -C vendor/ggml apply --check "$patch_file" 2>/dev/null; then
+            git -C vendor/ggml apply "$patch_file"
+            echo "Patch applied cleanly."
+          elif git -C vendor/ggml apply --reverse --check "$patch_file" 2>/dev/null; then
+            echo "Patch already applied to this checkout, skipping."
+          else
+            echo "::error::Patch does not apply and is not already applied - submodule pin may have drifted from v0.9.11."
+            exit 1
+          fi
+
+      - name: Configure CMake
+        shell: cmd
+        run: |
+          cmake -B build -G "Visual Studio 17 2022" -A x64 ^
+            -DGGML_CUDA=ON ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_CUDA_ARCHITECTURES="61;70;75;80;86;89" ^
+            -DCMAKE_INSTALL_PREFIX="%CD%\install"
 
       - name: Build Executables
+        shell: cmd
         run: |
-          cmake --build build --config Release
+          cmake --build build --config Release -j 4
+
+      - name: Install binaries + DLLs
+        shell: cmd
+        run: |
+          cmake --install build --config Release
 
       - name: Upload Windows Binaries
         uses: actions/upload-artifact@v4
         with:
           name: omnivoice-windows-cuda-x64
           path: |
-            build/bin/*.exe
-            build/bin/*.dll
-            build/*.exe
-            build/*.dll
+            install/bin/*.exe
+            install/bin/*.dll
+          if-no-files-found: error
